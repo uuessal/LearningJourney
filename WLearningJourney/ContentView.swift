@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-
+import Combine
 
 extension Color {
     init(hex: String) {
@@ -195,164 +195,187 @@ struct ContentView: View {
 
 
 
-struct ContentView2: View {
-    
-    @State private var selectedDate = Date()
-    @State private var currentWeekStart = Calendar.current.startOfWeek(for: Date())
-    @State private var showMonthPicker = false
-    
-    var body: some View {
-        NavigationStack {
-            VStack{
-                ZStack {
-                    // الخلفية الأساسية (المربع)
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.black.opacity(9.0)) // أسود شبه صافي
-                        .background(
-                            // الزجاج (blur + تأثير شفاف خلفي)
-                            //Color.black.opacity(0.1)
-                            //  .background(.ultraThinMaterial)
-                        )
-                        .overlay(
-                            // حدود زجاجية شفافة خفيفة
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.white.opacity(1.15), lineWidth: 1.9)
-                        )
-                        .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 5)
-                        .frame(width: 365, height: 254)
-                    
-                    // محتوى التقويم داخل المربع
-                    CalendarContainer(
-                        selectedDate: $selectedDate,
-                        currentWeekStart: $currentWeekStart,
-                        showMonthPicker: $showMonthPicker
-                    )
-                    .padding()
-                }
-                
-                
-                Circle().frame(width: 274 , height: 274)
-                    .foregroundStyle(Color(hex: "#B34600").opacity(1))
-                    .glassEffect()     .overlay(
-                        Circle()
-                            .stroke(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.9),
-                                        Color.white.opacity(0.1),
-                                        Color.white.opacity(0.4)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 2.5
-                            )
-                            .blur(radius: 0.8)
-                    )
-                
-                    .overlay(
-                        Text("Log as\nLearned")
-                            .font(.system(size: 34, weight: .bold )).multilineTextAlignment(.center)
-                    )
-                
-                
-                
-                
-                Text("Start learning")
-                    .font(.system(size: 19))
-                    .frame(width: 274, height: 48)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 80)
-                            .strokeBorder(
-                                Color.white.opacity(0.9),
-                                lineWidth: 0.2
-                            )
-                    )
-                    .glassEffect(
-                        .regular
-                            .tint(Color(hex: "008694").opacity(1))
-                    )
-                Text("1 out of 2 Freezes used ").font(.system(size: 14))
-                
-                
-                
-                
-                
-                
-            }
-            .navigationTitle("Swift Learning")
-            .navigationBarTitleDisplayMode(.inline) // أو .large
-            .toolbar {
-                // زر يسار (مثل رجوع أو إعدادات)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        print("⚙️ Settings tapped")
-                    } label: {
-                        Image(systemName: "gearshape.fill")
-                    }
-                    
-                }
-                
-            }}}}
 
-    struct CalendarContainer: View {
-        @Binding var selectedDate: Date
-        @Binding var currentWeekStart: Date
-        @Binding var showMonthPicker: Bool
+// MARK: - VIEWMODEL
+@MainActor
+class CalendarViewModel: ObservableObject {
+    @Published var selectedDate: Date
+    @Published var currentWeekStart: Date
+    @Published var showMonthPicker = false
+    @AppStorage("learnedDates") private var learnedDatesData: Data = Data()
 
-        var body: some View {
-            VStack(spacing: 16) {
-                CalendarHeader(
-                    currentWeekStart: $currentWeekStart,
-                    showMonthPicker: $showMonthPicker,
-                    selectedDate: $selectedDate
-                )
+    @Published private(set) var learnedDates: Set<Date> = []
 
-                CalendarDaysRow(
-                    selectedDate: $selectedDate,
-                    currentWeekStart: $currentWeekStart
-                )
+    init() {
+        let today = Date()
+        self.selectedDate = today
+        self.currentWeekStart = Calendar.current.startOfWeek(for: today)
+        loadLearnedDates()
+    }
 
-                Divider().background(Color.white.opacity(0.2)).padding(.vertical, 6)
+    func markSelectedDateAsLearned() {
+        let day = Calendar.current.startOfDay(for: selectedDate)
+        learnedDates.insert(day)
+        saveLearnedDates()
+    }
 
-                // القسم القلاسي تحت الكلندر
-                LearningStatsSection()
-            }
-            .padding(20)
-            .background(
-                // جعل الحاوية الرمادية كلها قلاسي
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
-                    )
-            )
-            .padding()
-            .sheet(isPresented: $showMonthPicker) {
-                MonthYearPicker(selectedDate: $selectedDate)
-                    .presentationDetents([.medium])
-                    .onDisappear {
-                        currentWeekStart = Calendar.current.startOfWeek(for: selectedDate)
-                    }
-            }
-            .preferredColorScheme(.dark)
+    func isLearned(_ date: Date) -> Bool {
+        learnedDates.contains(Calendar.current.startOfDay(for: date))
+    }
+
+    private func saveLearnedDates() {
+        if let data = try? JSONEncoder().encode(Array(learnedDates)) {
+            learnedDatesData = data
         }
     }
 
-    // MARK: - Header
-    struct CalendarHeader: View {
-        @Binding var currentWeekStart: Date
-        @Binding var showMonthPicker: Bool
-        @Binding var selectedDate: Date
+    private func loadLearnedDates() {
+        if let loaded = try? JSONDecoder().decode([Date].self, from: learnedDatesData) {
+            learnedDates = Set(loaded)
+        }
+    }
 
+    func changeWeek(by offset: Int) {
+        if let newDate = Calendar.current.date(byAdding: .weekOfYear, value: offset, to: currentWeekStart) {
+            withAnimation(.easeInOut) {
+                currentWeekStart = newDate
+            }
+        }
+    }
+}
+
+extension Calendar {
+    func startOfWeek(for date: Date) -> Date {
+        let comps = dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+        return self.date(from: comps) ?? date
+    }
+}
+
+// MARK: - MAIN VIEW
+struct ContentView2: View {
+    @StateObject private var viewModel = CalendarViewModel()
+
+    var body: some View {
+        VStack(spacing: 24) {
+            // Header
+            HStack {
+                Text("Activity")
+                    .font(.largeTitle.bold())
+                    .foregroundColor(.white)
+                Spacer()
+                HStack(spacing: 10) {
+                    CircleButton(icon: "calendar")
+                    CircleButton(icon: "pencil.and.outline")
+                }
+            }
+            .padding(.horizontal, 20)
+
+            // Calendar Container
+            CalendarContainer(viewModel: viewModel)
+
+            // Log as Learned Button
+            Button(action: {
+                viewModel.markSelectedDateAsLearned()
+            }) {
+                Circle()
+                    .frame(width: 274, height: 274)
+                    .foregroundStyle(Color(hex: "#B34600"))
+                    .glassEffect()
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.4), lineWidth: 2)
+                            .blur(radius: 0.8)
+                    )
+                    .overlay(
+                        Text("Log as\nLearned")
+                            .font(.system(size: 34, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(.white)
+                    )
+            }
+
+            // Bottom Button
+            Text("Start learning")
+                .font(.system(size: 19))
+                .frame(width: 274, height: 48)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 80)
+                        .stroke(Color.white.opacity(0.9), lineWidth: 0.2)
+                )
+                .glassEffect(.regular.tint(Color(hex: "008694")))
+
+            Text("1 out of 2 Freezes used")
+                .font(.system(size: 14))
+                .foregroundStyle(.gray.opacity(0.5))
+        }
+        .padding(.vertical, 20)
+        .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - CIRCLE BUTTON
+struct CircleButton: View {
+    var icon: String
+    var body: some View {
+        Image(systemName: icon)
+            .foregroundColor(.white)
+            .frame(width: 44, height: 44)
+            .background(
+                Circle()
+                    .fill(Color.gray.opacity(0.01))
+                    .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+            )
+            .glassEffect()
+    }
+}
+
+// MARK: - CALENDAR CONTAINER
+struct CalendarContainer: View {
+    @ObservedObject var viewModel: CalendarViewModel
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Header(viewModel: viewModel)
+            Weekdays()
+            DatesRow(viewModel: viewModel)
+
+            Divider().background(Color.white.opacity(0.2)).padding(.vertical, 6)
+
+            LearningStatsSection()
+        }
+        .padding(20)
+        .frame(width: 400, height: 280)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(Color.black.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .padding()
+        .sheet(isPresented: $viewModel.showMonthPicker) {
+            MonthYearPicker(selectedDate: $viewModel.selectedDate)
+                .presentationDetents([.medium])
+                .onDisappear {
+                    viewModel.currentWeekStart = Calendar.current.startOfWeek(for: viewModel.selectedDate)
+                }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Subviews to help type-checker
+
+    private struct Header: View {
+        @ObservedObject var viewModel: CalendarViewModel
         var body: some View {
             HStack {
-                Button(action: { showMonthPicker.toggle() }) {
+                Button(action: { viewModel.showMonthPicker.toggle() }) {
                     HStack(spacing: 4) {
-                        Text(currentWeekStart.formatted(.dateTime.month(.wide).year()))
+                        Text(viewModel.currentWeekStart.formatted(.dateTime.month(.wide).year()))
                             .font(.system(size: 18, weight: .semibold))
-                        Image(systemName: "chevron.down").foregroundColor(.orange)
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(.orange)
                             .font(.system(size: 12, weight: .semibold))
                     }
                 }
@@ -360,146 +383,144 @@ struct ContentView2: View {
                 Spacer()
 
                 HStack(spacing: 16) {
-                    Button(action: { changeWeek(by: -1) }) {
-                        Image(systemName: "chevron.left").foregroundColor(.orange)
+                    Button { viewModel.changeWeek(by: -1) } label: {
+                        Image(systemName: "chevron.left")
+                            .foregroundColor(.orange)
                             .font(.system(size: 16, weight: .semibold))
-                        
                     }
-                    Button(action: { changeWeek(by: 1) }) {
-                        Image(systemName: "chevron.right").foregroundColor(.orange)
+                    Button { viewModel.changeWeek(by: 1) } label: {
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.orange)
                             .font(.system(size: 16, weight: .semibold))
                     }
                 }
             }
             .foregroundStyle(.white)
         }
-
-        private func changeWeek(by offset: Int) {
-            if let newDate = Calendar.current.date(byAdding: .weekOfYear, value: offset, to: currentWeekStart) {
-                withAnimation(.easeInOut) {
-                    currentWeekStart = newDate
-                }
-            }
-        }
     }
 
-    // MARK: - Week Row
-    struct CalendarDaysRow: View {
-        @Binding var selectedDate: Date
-        @Binding var currentWeekStart: Date
-
+    private struct Weekdays: View {
+        private let labels = ["SUN","MON","TUE","WED","THU","FRI","SAT"]
         var body: some View {
-            VStack {
-                HStack{
-                    ForEach(["SUN","MON","TUE","WED","THU","FRI","SAT"], id: \.self) { day in
-                        Text(day)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.gray)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-
-                HStack {
-                    ForEach(0..<7, id: \.self) { index in
-                        let date = Calendar.current.date(byAdding: .day, value: index, to: currentWeekStart)!
-                        let isSelected = Calendar.current.isDate(date, inSameDayAs: selectedDate)
-
-                        VStack {
-                            Text(date.formatted(.dateTime.day()))
-                                .font(.system(size: 25, weight: .semibold))
-                                .frame(width: 40, height: 40)
-                                .background(
-                                    Circle()
-                                        .fill(isSelected ? Color(hex: "#F67A2A") : Color.clear)
-                                )
-                                .onTapGesture {
-                                    withAnimation(.spring()) {
-                                        selectedDate = date
-                                    }
-                                }
-                        }
+            HStack(spacing: 18) {
+                ForEach(labels, id: \.self) { day in
+                    Text(day)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.gray)
                         .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private struct DatesRow: View {
+        @ObservedObject var viewModel: CalendarViewModel
+        var body: some View {
+            HStack {
+                ForEach(0..<7, id: \.self) { index in
+                    let date = Calendar.current.date(byAdding: .day, value: index, to: viewModel.currentWeekStart)!
+                    let isSelected = Calendar.current.isDate(date, inSameDayAs: viewModel.selectedDate)
+                    let isLearned = viewModel.isLearned(date)
+
+                    VStack {
+                        Text(date.formatted(.dateTime.day()))
+                            .font(.system(size: 25, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        isSelected
+                                            ? Color(hex: "#F67A2A")
+                                            : (isLearned ? Color(hex: "#B34600") : .clear)
+                                    )
+                            )
+                            .onTapGesture {
+                                withAnimation(.spring()) {
+                                    viewModel.selectedDate = date
+                                }
+                            }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
     }
+}
 
-    // MARK: - Stats Section
-    struct LearningStatsSection: View {
-        var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Learning Swift")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                HStack(spacing: 13) {
-                    StatCard(icon: "flame.fill" , value: 3, label: "Days Learned", color: Color(hex: "#5C3A1C"),iconColor: Color(hex: "#FF9230")  ).cornerRadius(34)
-                    StatCard(icon: "cube.fill", value: 1, label: "Day Freezed", color: Color(hex: "#1C3C4D")  ,iconColor: Color(hex: "#3CD3FE")).cornerRadius(34)
-                }
-            }
-        }
-    }
-
-    // MARK: - StatCard
-    struct StatCard: View {
-        var icon: String
-        var value: Int
-        var label: String
-        var color: Color
-        var iconColor: Color
-
-        var body: some View {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .foregroundStyle(iconColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(value)")
-                        .font(.system(size: 20, weight: .bold))
-                    Text(label)
-                        .font(.system(size: 13))
-                }
+// MARK: - LEARNING STATS
+struct LearningStatsSection: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Learning Swift")
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
+
+            HStack(spacing: 13) {
+                StatCard(icon: "flame.fill", value: 3, label: "Days Learned",
+                         color: Color(hex: "#5C3A1C"),
+                         iconColor: Color(hex: "#FF9230"))
+                    .frame(width: 160, height: 69)
+                    .cornerRadius(34)
+
+                StatCard(icon: "cube.fill", value: 1, label: "Day Freezed",
+                         color: Color(hex: "#1C3C4D"),
+                         iconColor: Color(hex: "#3CD3FE"))
+                    .frame(width: 160, height: 69)
+                    .cornerRadius(34)
             }
-            .frame(maxWidth: .infinity, minHeight: 60)
-            .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
         }
     }
+}
 
-    // MARK: - MonthYearPicker
-    struct MonthYearPicker: View {
-        @Binding var selectedDate: Date
-        @Environment(\.dismiss) private var dismiss
+// MARK: - STAT CARD
+struct StatCard: View {
+    var icon: String
+    var value: Int
+    var label: String
+    var color: Color
+    var iconColor: Color
 
-        var body: some View {
-            VStack {
-                DatePicker(
-                    "Select Date",
-                    selection: $selectedDate,
-                    displayedComponents: [.date]
-                )
-                .datePickerStyle(.wheel)
-                .labelsHidden()
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(iconColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(value)")
+                    .font(.system(size: 24, weight: .bold))
+                Text(label)
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity, minHeight: 70)
+        .background(color)
+        .clipShape(RoundedRectangle(cornerRadius: 60))
+    }
+}
 
-                Button("Done") {
-                    dismiss()
-                }
+// MARK: - MONTH PICKER
+struct MonthYearPicker: View {
+    @Binding var selectedDate: Date
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack {
+            DatePicker("Select Date",
+                       selection: $selectedDate,
+                       displayedComponents: [.date])
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+
+            Button("Done") { dismiss() }
                 .padding()
                 .buttonStyle(.borderedProminent)
-            }
-            .padding()
-            .presentationBackground(.ultraThinMaterial)
         }
+        .padding()
+        .presentationBackground(.ultraThinMaterial)
     }
+}
 
-    // MARK: - Helpers
-    extension Calendar {
-        func startOfWeek(for date: Date) -> Date {
-            let comps = dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-            return self.date(from: comps) ?? date
-        }
-    }
+
 
 
 
