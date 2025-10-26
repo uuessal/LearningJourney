@@ -1,0 +1,56 @@
+// MARK: - Header with arrows
+HStack {
+    // عرض الشهر والسنة مع السهم المنسدل
+    Button {
+        viewModel.showMonthPicker.toggle()
+    } label: {
+        HStack(spacing: 4) {
+            Text(viewModel.currentWeekStart.formatted(.dateTime.month(.wide).year()))
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+            
+            Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.orange)
+        }
+    }
+    .sheet(isPresented: $viewModel.showMonthPicker) {
+        VStack {
+            DatePicker(
+                "Select Month & Year",
+                selection: $viewModel.currentWeekStart,
+                displayedComponents: [.date]
+            )
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .colorScheme(.dark)
+            .presentationDetents([.height(320)])
+            
+            Button("Done") {
+                viewModel.showMonthPicker = false
+            }
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundColor(.orange)
+            .padding(.top, 8)
+        }
+        .presentationBackground(.black.opacity(0.9))
+    }
+
+    Spacer()
+
+    Button {
+        viewModel.changeWeek(by: -1)
+    } label: {
+        Image(systemName: "chevron.left")
+            .foregroundColor(.orange)
+            .font(.system(size: 16, weight: .semibold))
+    }
+
+    Button {
+        viewModel.changeWeek(by: 1)
+    } label: {
+        Image(systemName: "chevron.right")
+            .foregroundColor(.orange)
+            .font(.system(size: 16, weight: .semibold))
+    }
+}

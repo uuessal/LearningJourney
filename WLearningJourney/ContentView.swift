@@ -82,18 +82,18 @@ struct ContentView: View {
                             // العنوان والوصف
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Hello Learner")
-                                    .font(.system(size: 34, weight: .bold)).padding(.bottom,4)
+                                    .font(.system(size: 34, weight: .bold))
                                 Text("This app will help you learn everyday!")
                                     .font(.system(size: 17))
                                     .foregroundColor(.gray)
                             }
-                            .frame(width: contentWidth, alignment: .leading)
-                            .padding(.bottom, 31)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Spacer().frame(height: 31)
 
-                            // TextField
+                            // هنا ممكن اخليها واجهة واستدعيها
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("I want to learn")
-                                    .font(.system(size: 22)).padding(.bottom,4)
+                                    .font(.system(size: 22))
 
                                 TextField("Swift", text: $username)
                                     .padding(.bottom, 8)
@@ -104,8 +104,8 @@ struct ContentView: View {
                                         alignment: .bottom
                                     )
                             }
-                            .frame(width: contentWidth, alignment: .leading)
-                            .padding(.bottom, 24)
+                         //   .frame(width: contentWidth, alignment: .leading)
+                            Spacer().frame(height: 24)
 
                             // خيارات المدة
                             VStack(alignment: .leading, spacing: 12) {
@@ -143,7 +143,7 @@ struct ContentView: View {
                                     }
                                 }
                             }
-                            .frame(width: contentWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.bottom, 333)
                         }
                         .padding(.horizontal, 16) // البادنق 16 لكل المحتوى تحت الدائرة
@@ -194,52 +194,123 @@ struct ContentView: View {
 
 
 
-
-
 // MARK: - VIEWMODEL
 @MainActor
 class CalendarViewModel: ObservableObject {
     @Published var selectedDate: Date
     @Published var currentWeekStart: Date
-    @Published var showMonthPicker = false
-    @AppStorage("learnedDates") private var learnedDatesData: Data = Data()
-
+    
+    @AppStorage("learnedDatesData") private var learnedDatesData: Data = Data()
+    @AppStorage("freezedDatesData") private var freezedDatesData: Data = Data()
+    
     @Published private(set) var learnedDates: Set<Date> = []
+    @Published private(set) var freezedDates: Set<Date> = []
+    
+    @Published var showMonthPicker = false
+    @Published var isTodayLogged: Bool = false  // 👈 لمعرفة إذا سجل اليوم
+    @Published var isTodayFreezed: Bool = false  // 👈 لمعرفة إذا فرز اليوم
+    
+    
+    
+    
+    
 
+    private var midnightTimer: Timer?
+    
     init() {
         let today = Date()
         self.selectedDate = today
         self.currentWeekStart = Calendar.current.startOfWeek(for: today)
-        loadLearnedDates()
+        loadData()
+        checkIfTodayLogged()
+        scheduleMidnightReset()
     }
-
-    func markSelectedDateAsLearned() {
-        let day = Calendar.current.startOfDay(for: selectedDate)
-        learnedDates.insert(day)
-        saveLearnedDates()
+    
+    // MARK: - ACTIONS
+    
+    func markTodayAsLearned() {
+        let today = normalized(Date())
+        guard !isTodayLogged else { return } // ⬅️ يمنع أي ضغط بعد تسجيل أحد الزرين
+        learnedDates.insert(today)
+        saveData()
+        checkIfTodayLogged()
+        objectWillChange.send()
     }
-
+    
+    func markTodayAsFreezed() {
+        let today = normalized(Date())
+        guard !isTodayFreezed else { return } // ⬅️ يمنع أي ضغط بعد تسجيل أحد الزرين
+        freezedDates.insert(today)
+        saveData()
+        checkIfTodayLogged()
+        objectWillChange.send()
+    }
+    
+    // MARK: - UI Logic
+    
     func isLearned(_ date: Date) -> Bool {
-        learnedDates.contains(Calendar.current.startOfDay(for: date))
+        learnedDates.contains(normalized(date))
     }
-
-    private func saveLearnedDates() {
-        if let data = try? JSONEncoder().encode(Array(learnedDates)) {
-            learnedDatesData = data
+    
+    func isFreezed(_ date: Date) -> Bool {
+        freezedDates.contains(normalized(date))
+    }
+    
+    func isToday(_ date: Date) -> Bool {
+        Calendar.current.isDateInToday(date)
+    }
+    
+    func changeWeek(by value: Int) {
+        if let newDate = Calendar.current.date(byAdding: .weekOfYear, value: value, to: currentWeekStart) {
+            currentWeekStart = newDate
         }
     }
-
-    private func loadLearnedDates() {
-        if let loaded = try? JSONDecoder().decode([Date].self, from: learnedDatesData) {
-            learnedDates = Set(loaded)
-        }
+    
+    // MARK: - Helpers
+    
+    private func normalized(_ date: Date) -> Date {
+        Calendar.current.startOfDay(for: date)
     }
-
-    func changeWeek(by offset: Int) {
-        if let newDate = Calendar.current.date(byAdding: .weekOfYear, value: offset, to: currentWeekStart) {
-            withAnimation(.easeInOut) {
-                currentWeekStart = newDate
+    
+    // 👇 يحدد إذا المستخدم سجل اليوم
+    func checkIfTodayLogged() {
+        let today = normalized(Date())
+          isTodayLogged = learnedDates.contains(today)
+          isTodayFreezed = freezedDates.contains(today)
+    }
+    
+    // 👇 يعيد التفعيل بعد منتصف الليل
+    private func scheduleMidnightReset() {
+        midnightTimer?.invalidate()
+        let now = Date()
+        if let midnight = Calendar.current.nextDate(after: now, matching: DateComponents(hour: 0), matchingPolicy: .nextTime) {
+            let interval = midnight.timeIntervalSince(now)
+            midnightTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+                self?.checkIfTodayLogged()
+                self?.scheduleMidnightReset()
             }
+        }
+    }
+    
+    // MARK: - Data
+    
+    private func saveData() {
+        let encoder = JSONEncoder()
+        if let learnedData = try? encoder.encode(Array(learnedDates)) {
+            learnedDatesData = learnedData
+        }
+        if let freezedData = try? encoder.encode(Array(freezedDates)) {
+            freezedDatesData = freezedData
+        }
+    }
+    
+    private func loadData() {
+        let decoder = JSONDecoder()
+        if let decodedLearned = try? decoder.decode([Date].self, from: learnedDatesData) {
+            learnedDates = Set(decodedLearned)
+        }
+        if let decodedFreezed = try? decoder.decode([Date].self, from: freezedDatesData) {
+            freezedDates = Set(decodedFreezed)
         }
     }
 }
@@ -272,45 +343,111 @@ struct ContentView2: View {
 
             // Calendar Container
             CalendarContainer(viewModel: viewModel)
-
-            // Log as Learned Button
+            
+            
+            
             Button(action: {
-                viewModel.markSelectedDateAsLearned()
+                viewModel.markTodayAsLearned()
             }) {
                 Circle()
                     .frame(width: 274, height: 274)
-                    .foregroundStyle(Color(hex: "#B34600"))
-                    .glassEffect()
+                    .foregroundStyle(
+                        
+                        viewModel.isTodayLogged
+                        ? Color(hex: "#140000") // ⬅️ اللون لما يكون Disabled
+                        : viewModel.isTodayFreezed
+                        ? Color(hex: "#00060C")
+                        : Color(hex: "#B34600")
+                        
+                               )
+                  .glassEffect()
                     .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.4), lineWidth: 2)
-                            .blur(radius: 0.8)
-                    )
+                                          Circle()
+                                              .stroke(
+                                                LinearGradient(
+                                                    colors: [
+                                                        Color.white.opacity(0.9),
+                                                        Color.gray.opacity(0.01),
+                                                        Color.white.opacity(0.4)
+                                                    ],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                ),
+                                                lineWidth: 0.6
+                                            )
+                                      )
                     .overlay(
-                        Text("Log as\nLearned")
+                        
+                        
+                        // اذا كان ليرند يدخل هنا
+                        viewModel.isTodayLogged
+                           ? Text("Learned\nToday")
                             .font(.system(size: 34, weight: .bold))
                             .multilineTextAlignment(.center)
-                            .foregroundColor(.white)
-                    )
-            }
+                            .foregroundColor(Color(hex: "#FF9230"))
+                    
+                        // اذا كان فريز دخل هنا
+                        : viewModel.isTodayFreezed
 
-            // Bottom Button
-            Text("Start learning")
-                .font(.system(size: 19))
-                .frame(width: 274, height: 48)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 80)
-                        .stroke(Color.white.opacity(0.9), lineWidth: 0.2)
-                )
-                .glassEffect(.regular.tint(Color(hex: "008694")))
+                    ? Text("Day\nFreezed")
+                     .font(.system(size: 34, weight: .bold))
+                     .multilineTextAlignment(.center)
+                     .foregroundColor(Color(hex: "#00D2E0"))
+                        
+             // اي شي ثاني هنا
+                    : Text("Log as\nLearned")
+                     .font(.system(size: 34, weight: .bold))
+                     .multilineTextAlignment(.center)
+                     .foregroundColor(.white)
+             )
+                 
+            }
+            .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed)
+
+
+            // Log as Freezed Button
+            Button(action: {
+                viewModel.markTodayAsFreezed()
+            }) {
+                RoundedRectangle(cornerRadius: 80)
+                      .fill(
+                          viewModel.isTodayFreezed
+                          ? Color(hex: "#091C1D") // اللون لما يكون Disabled
+                          : Color(hex: "#008694") // اللون العادي
+                      )
+                      .frame(width: 274, height: 48)
+                      .overlay(
+                        
+                        viewModel.isTodayFreezed
+
+                        ? Text("Log as Freezed")
+                              .font(.system(size: 19, weight: .semibold))
+                              .foregroundColor(.white)
+                        
+                        
+                        : Text("Log as Freezed")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundColor(.white)
+                      
+                        
+                      )
+                      .glassEffect(.regular.tint(.clear))
+            }
+            .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed)
 
             Text("1 out of 2 Freezes used")
                 .font(.system(size: 14))
                 .foregroundStyle(.gray.opacity(0.5))
+
         }
         .padding(.vertical, 20)
         .preferredColorScheme(.dark)
     }
+    
+    
+    
+
+    
 }
 
 // MARK: - CIRCLE BUTTON
@@ -335,7 +472,32 @@ struct CalendarContainer: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Header(viewModel: viewModel)
+            // Header with arrows
+            HStack {
+                Text(viewModel.currentWeekStart.formatted(.dateTime.month(.wide).year()))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Spacer()
+                
+                Button {
+                    viewModel.changeWeek(by: -1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+       
+
+                Button {
+                    viewModel.changeWeek(by: 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 16, weight: .semibold))
+                }
+            }
+
             Weekdays()
             DatesRow(viewModel: viewModel)
 
@@ -354,49 +516,7 @@ struct CalendarContainer: View {
                 )
         )
         .padding()
-        .sheet(isPresented: $viewModel.showMonthPicker) {
-            MonthYearPicker(selectedDate: $viewModel.selectedDate)
-                .presentationDetents([.medium])
-                .onDisappear {
-                    viewModel.currentWeekStart = Calendar.current.startOfWeek(for: viewModel.selectedDate)
-                }
-        }
         .preferredColorScheme(.dark)
-    }
-
-    // MARK: - Subviews to help type-checker
-
-    private struct Header: View {
-        @ObservedObject var viewModel: CalendarViewModel
-        var body: some View {
-            HStack {
-                Button(action: { viewModel.showMonthPicker.toggle() }) {
-                    HStack(spacing: 4) {
-                        Text(viewModel.currentWeekStart.formatted(.dateTime.month(.wide).year()))
-                            .font(.system(size: 18, weight: .semibold))
-                        Image(systemName: "chevron.down")
-                            .foregroundColor(.orange)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                }
-
-                Spacer()
-
-                HStack(spacing: 16) {
-                    Button { viewModel.changeWeek(by: -1) } label: {
-                        Image(systemName: "chevron.left")
-                            .foregroundColor(.orange)
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                    Button { viewModel.changeWeek(by: 1) } label: {
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.orange)
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                }
-            }
-            .foregroundStyle(.white)
-        }
     }
 
     private struct Weekdays: View {
@@ -419,26 +539,21 @@ struct CalendarContainer: View {
             HStack {
                 ForEach(0..<7, id: \.self) { index in
                     let date = Calendar.current.date(byAdding: .day, value: index, to: viewModel.currentWeekStart)!
-                    let isSelected = Calendar.current.isDate(date, inSameDayAs: viewModel.selectedDate)
+                    let isToday = viewModel.isToday(date)
                     let isLearned = viewModel.isLearned(date)
+                    let isFreezed = viewModel.isFreezed(date)
 
                     VStack {
                         Text(date.formatted(.dateTime.day()))
                             .font(.system(size: 25, weight: .semibold))
-                            .frame(width: 40, height: 40)
+                            .frame(width: 44, height: 44)
                             .background(
-                                Circle()
-                                    .fill(
-                                        isSelected
-                                            ? Color(hex: "#F67A2A")
-                                            : (isLearned ? Color(hex: "#B34600") : .clear)
-                                    )
+                                Circle().fill(
+                                    isLearned ? Color(hex: "#5C3A1C") :
+                                    (isFreezed ? Color(hex: "#1C3C4D") :
+                                     (isToday ? Color(hex: "#F67A2A").opacity(0.3) : .clear))
+                                )
                             )
-                            .onTapGesture {
-                                withAnimation(.spring()) {
-                                    viewModel.selectedDate = date
-                                }
-                            }
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -497,34 +612,6 @@ struct StatCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 60))
     }
 }
-
-// MARK: - MONTH PICKER
-struct MonthYearPicker: View {
-    @Binding var selectedDate: Date
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack {
-            DatePicker("Select Date",
-                       selection: $selectedDate,
-                       displayedComponents: [.date])
-            .datePickerStyle(.wheel)
-            .labelsHidden()
-
-            Button("Done") { dismiss() }
-                .padding()
-                .buttonStyle(.borderedProminent)
-        }
-        .padding()
-        .presentationBackground(.ultraThinMaterial)
-    }
-}
-
-
-
-
-
-// github test
 
 
 #Preview {
