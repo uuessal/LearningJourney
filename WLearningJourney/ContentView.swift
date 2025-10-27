@@ -22,6 +22,128 @@ extension Color {
     }
 }
 
+
+
+
+// MARK: - SetupView
+
+
+struct SetupView: View {
+    @ObservedObject var viewModel: CalendarViewModel
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var userLearning: String = ""
+    @State private var selected: String = ""
+    @State private var showConfirmAlert = false
+    
+    let options = ["1W", "2W", "1M"]
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    
+                    // TextField
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("I want to learn")
+                            .font(.system(size: 22))
+                        
+                        TextField("Swift", text: $userLearning)
+                            .padding(.bottom, 8)
+                            .overlay(
+                                Rectangle()
+                                    .frame(height: 1)
+                                    .foregroundColor(.gray),
+                                alignment: .bottom
+                            )
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("I want to learn it in a ")
+                            .font(.system(size: 18))
+                            .padding(.bottom, 12)
+
+                        HStack(spacing: 16) {
+                            ForEach(options, id: \.self) { option in
+                                Text(option)
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .frame(width: 97, height: 48)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 80)
+                                            .fill(Color.clear)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 80)
+                                            .strokeBorder(
+                                                selected == option
+                                                ? Color.white.opacity(0.9)
+                                                : Color.white.opacity(0.1),
+                                                lineWidth: 0.2
+                                            )
+                                    )
+                                    .glassEffect(
+                                        selected == option
+                                        ? .regular.tint(Color(hex: "#B34600").opacity(1))
+                                        : .regular
+                                    )
+                                    .onTapGesture {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                            selected = option
+                                        }
+                                    }
+                            }
+                        }
+                    }                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Spacer().frame(height: 300)
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("New Goal")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    // ✅ دائرة الصح تظهر فقط لما المستخدم يكتب الهدف واختار المدة
+                    if !userLearning.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Button(action: {
+                            showConfirmAlert = true
+                        }) {
+                            Circle()
+                                .fill(Color(hex: "#B34600"))
+                                .frame(width: 36, height: 36)
+                                .overlay(
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .foregroundColor(.white)
+                                )
+                                .shadow(radius: 3)
+                        }
+                        .transition(.scale.combined(with: .opacity))
+                        .animation(.spring(), value: userLearning)
+                        .alert("Are you sure?", isPresented: $showConfirmAlert) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Yes, start new goal", role: .destructive) {
+                                viewModel.resetForNewGoal(userLearning, duration: selected)
+                                dismiss()
+                            }
+                        } message: {
+                            Text("This will delete your previous learning progress and start a new period.")
+                        }
+                    }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+
+
+// MARK: - Color Extension
+
+
+
+
 // MARK: - MAIN VIEW (PAGE 1)
 struct ContentView: View {
     @State private var userlearning: String = ""
@@ -174,7 +296,9 @@ struct ContentView: View {
                             .simultaneousGesture(TapGesture().onEnded {
                                 selectedDuration = selected
                                 selectedLearning = userlearning
+                                UserDefaults.standard.set(Date(), forKey: "learningStartDate") // ✅ حفظ بداية الفترة
                             })
+
 
                             Spacer(minLength: 0)
                         }
@@ -207,6 +331,14 @@ class CalendarViewModel: ObservableObject {
     @AppStorage("learnedDatesData") private var learnedDatesData: Data = Data()
     @AppStorage("freezedDatesData") private var freezedDatesData: Data = Data()
     @AppStorage("selectedDuration") private var selectedDuration: String = "Week"
+    @AppStorage("learningStartDate") private var learningStartDate: Date = Date()
+    @Published var isPeriodFinished: Bool = false
+    
+    
+    
+    @AppStorage("lastActiveDate") private var lastActiveDate: Date = Date()
+    @AppStorage("currentStreak") private var currentStreak: Int = 0
+
 
     
 
@@ -225,9 +357,73 @@ class CalendarViewModel: ObservableObject {
         self.currentWeekStart = Calendar.current.startOfWeek(for: today)
         loadData()
         checkIfTodayLogged()
+        
+        checkStreakValidity() // ✅ هنا
+
         scheduleMidnightReset()
+        
+
     }
     
+    
+    
+    // MARK: - بداية فترة جديدة بهدف جديد
+    func resetForNewGoal(_ newGoal: String, duration: String) {
+        // 🧹 امسح كل البيانات القديمة
+        learnedDates.removeAll()
+        freezedDates.removeAll()
+        isTodayLogged = false
+        isTodayFreezed = false
+        isPeriodFinished = false
+        currentStreak = 0
+
+        // 🔁 حفظ الهدف الجديد والمدة
+        UserDefaults.standard.set(newGoal, forKey: "selectedLearning")
+        UserDefaults.standard.set(duration, forKey: "selectedDuration")
+        
+        // 🕓 سجل بداية الفترة الجديدة
+        let startDate = Date()
+        UserDefaults.standard.set(startDate, forKey: "learningStartDate")
+        learningStartDate = startDate
+        selectedDuration = duration
+        
+        // 🔄 احفظ التغييرات بالـ AppStorage
+        saveData()
+        
+        print("✅ New learning goal '\(newGoal)' started for duration: \(duration)")
+    }
+
+    
+    // MARK: - إعادة تشغيل نفس الهدف والفترة
+    func restartSameGoal() {
+        // 🧹 1. إعادة تعيين القيم السابقة
+        learnedDates.removeAll()
+        freezedDates.removeAll()
+        isTodayLogged = false
+        isTodayFreezed = false
+        
+        // 🕓 2. حفظ تاريخ البداية الجديد
+        learningStartDate = Date()
+        UserDefaults.standard.set(learningStartDate, forKey: "learningStartDate")
+
+        // 🎯 3. تحميل نفس المدة السابقة فقط (الهدف محفوظ في واجهة المستخدم)
+        if let previousDuration = UserDefaults.standard.string(forKey: "selectedDuration") {
+            selectedDuration = previousDuration
+            UserDefaults.standard.set(previousDuration, forKey: "selectedDuration")
+        }
+
+        // 🟢 4. تحديث حالة الفترة لتبدأ من جديد
+        isPeriodFinished = false
+        selectedDate = Date()
+        currentWeekStart = Calendar.current.startOfWeek(for: Date())
+
+        // 🔁 5. حفظ التغييرات
+        saveData()
+        checkIfTodayLogged()
+
+        print("✅ Restarted same learning goal and duration")
+    }
+
     
     /// عدد الفريزز المسموح بها حسب المدة
     var totalFreezesAllowed: Int {
@@ -263,6 +459,11 @@ class CalendarViewModel: ObservableObject {
         saveData()
         checkIfTodayLogged()
         objectWillChange.send()
+        checkIfLastDayAndFinish()
+        
+        lastActiveDate = Date()
+        currentStreak += 1
+        saveData()
     }
 
     func markTodayAsFreezed() {
@@ -272,7 +473,23 @@ class CalendarViewModel: ObservableObject {
         saveData()
         checkIfTodayLogged()
         objectWillChange.send()
+        checkIfLastDayAndFinish()
+        
+        lastActiveDate = Date()
+        saveData()
     }
+    
+    
+    func checkStreakValidity() {
+        let hoursSinceLastActive = Date().timeIntervalSince(lastActiveDate) / 3600
+        if hoursSinceLastActive > 32 {
+            // تجاوز 32 ساعة بدون نشاط
+            currentStreak = 0
+            print("🔥 Streak reset due to inactivity (>32h)")
+        }
+    }
+
+    
 
     func isLearned(_ date: Date) -> Bool {
         learnedDates.contains(normalized(date))
@@ -333,6 +550,36 @@ class CalendarViewModel: ObservableObject {
             freezedDates = Set(decodedFreezed)
         }
     }
+    
+    func checkIfLastDayAndFinish() {
+        let calendar = Calendar.current
+        var endDate: Date?
+
+        switch selectedDuration {
+        case "Week":
+            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
+        case "Month":
+            endDate = calendar.date(byAdding: .month, value: 1, to: learningStartDate)
+        case "Year":
+            endDate = calendar.date(byAdding: .year, value: 1, to: learningStartDate)
+        default:
+            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
+        }
+
+        // ✅ إذا اليوم هو آخر يوم من الفترة
+        if let endDate = endDate,
+           calendar.isDateInToday(endDate) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.isPeriodFinished = true
+            }
+        }
+    }
+    
+    
+    
+
+
+    
 }
 
 extension Calendar {
@@ -377,75 +624,125 @@ struct ContentView2: View {
                 Button(action: {
                     viewModel.markTodayAsLearned()
                 }) {
-                    Circle()
-                        .frame(width: 274, height: 274)
-                        .foregroundStyle(
-                            viewModel.isTodayLogged
-                            ? Color(hex: "#140000")
-                            : viewModel.isTodayFreezed
-                            ? Color(hex: "#00060C")
-                            : Color(hex: "#B34600")
-                        )
-                        .glassEffect()
-                        .overlay(
+                    ZStack {
+                        if viewModel.isPeriodFinished {
+                            // WELL DONE VIEW
+                            VStack(spacing: 12) {
+                                Image(systemName: "hands.clap.fill")
+                                    .font(.system(size: 60))
+                                    .foregroundColor(Color(hex: "#FF9230"))
+
+                                Text("Well done!")
+                                    .font(.system(size: 30, weight: .bold))
+                                    .foregroundColor(.white)
+
+                                Text("Goal completed! Start learning again or set new learning goal")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.gray)
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: 250)
+                            }
+                            .frame(height: 274) // 🟢 ثبتي الارتفاع
+                        } else {
+                            // ORIGINAL CIRCLE VIEW
                             Circle()
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(0.9),
-                                            Color.gray.opacity(0.01),
-                                            Color.white.opacity(0.4)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 0.6
+                                .frame(width: 274, height: 274)
+                                .foregroundStyle(
+                                    viewModel.isTodayLogged
+                                    ? Color(hex: "#140000")
+                                    : viewModel.isTodayFreezed
+                                    ? Color(hex: "#00060C")
+                                    : Color(hex: "#B34600")
                                 )
-                        )
-                        .overlay(
-                            viewModel.isTodayLogged
-                            ? Text("Learned\nToday")
-                                .font(.system(size: 34, weight: .bold))
-                                .multilineTextAlignment(.center)
-                                .foregroundColor(Color(hex: "#FF9230"))
-                            : viewModel.isTodayFreezed
-                            ? Text("Day\nFreezed")
-                                .font(.system(size: 34, weight: .bold))
-                                .multilineTextAlignment(.center)
-                                .foregroundColor(Color(hex: "#00D2E0"))
-                            : Text("Log as\nLearned")
-                                .font(.system(size: 34, weight: .bold))
-                                .multilineTextAlignment(.center)
-                                .foregroundColor(.white)
-                        )
+                                .glassEffect()
+                                .overlay(
+                                    Circle()
+                                        .stroke(
+                                            LinearGradient(
+                                                colors: [
+                                                    Color.white.opacity(0.9),
+                                                    Color.gray.opacity(0.01),
+                                                    Color.white.opacity(0.4)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 0.6
+                                        )
+                                )
+                                .overlay(
+                                    viewModel.isTodayLogged
+                                    ? Text("Learned\nToday")
+                                        .font(.system(size: 34, weight: .bold))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundColor(Color(hex: "#FF9230"))
+                                    : viewModel.isTodayFreezed
+                                    ? Text("Day\nFreezed")
+                                        .font(.system(size: 34, weight: .bold))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundColor(Color(hex: "#00D2E0"))
+                                    : Text("Log as\nLearned")
+                                        .font(.system(size: 34, weight: .bold))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundColor(.white)
+                                )
+                        }
+                    }
                 }
                 .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed)
-                
-                Button(action: {
-                    viewModel.markTodayAsFreezed()
-                }) {
-                    RoundedRectangle(cornerRadius: 80)
-                        .fill(
-                            viewModel.isTodayFreezed || viewModel.hasReachedFreezeLimit
-                            
-                            ? Color(hex: "#091C1D")
-                            : Color(hex: "#008694")
-                        )
-                        .frame(width: 274, height: 48)    .overlay(
-                            RoundedRectangle(cornerRadius: 80)
-                                .strokeBorder(Color.white.opacity(0.9), lineWidth: 0.5)
-                        )
-                        .overlay(
-                            
-                            
-                            Text("Log as Freezed")
+                // MARK: - Bottom Buttons Section
+                if viewModel.isPeriodFinished {
+                    VStack(spacing: 16) {
+                        // 🟠 زر Set new learning goal
+                        NavigationLink(destination: SetupView(viewModel: viewModel))  {
+                            Text("Set new learning goal")
                                 .font(.system(size: 19, weight: .semibold))
                                 .foregroundColor(.white)
-                        )
-                        .glassEffect(.regular.tint(.clear))
+                                .frame(width: 274, height: 48)
+                                .background(Color(hex: "#B34600"))
+                                .clipShape(RoundedRectangle(cornerRadius: 80))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 80)
+                                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 0.2)
+                                )
+                                .shadow(radius: 2)
+                        }
+
+                        // 🔸 زر نصي Set same learning goal and duration
+                        Button(action: {
+                          viewModel.restartSameGoal()
+                        }) {
+                            Text("Set same learning goal and duration")
+                                .font(.system(size: 16))
+                                .foregroundColor(Color(hex: "#B34600"))
+                        }
+                    }
+                } else {
+                    // 🔹 الزر الأصلي Log as Freezed
+                    Button(action: {
+                        viewModel.markTodayAsFreezed()
+                    }) {
+                        RoundedRectangle(cornerRadius: 80)
+                            .fill(
+                                viewModel.isTodayFreezed || viewModel.hasReachedFreezeLimit
+                                ? Color(hex: "#091C1D")
+                                : Color(hex: "#008694")
+                            )
+                            .frame(width: 274, height: 48)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 80)
+                                    .strokeBorder(Color.white.opacity(0.9), lineWidth: 0.5)
+                            )
+                            .overlay(
+                                Text("Log as Freezed")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .foregroundColor(.white)
+                            )
+                            .glassEffect(.regular.tint(.clear))
+                    }
+                    .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed || viewModel.hasReachedFreezeLimit)
                 }
-                .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed || viewModel.hasReachedFreezeLimit)
-                
+
                 Text("\(viewModel.usedFreezes) out of \(viewModel.totalFreezesAllowed) Freezes used (\(selectedDuration))")
                     .font(.system(size: 14))
                     .foregroundStyle(.gray.opacity(0.5))
@@ -617,7 +914,7 @@ struct CalendarContainer: View {
 
             Divider().background(Color.white.opacity(0.2)).padding(.vertical, 6)
 
-            LearningStatsSection()
+            LearningStatsSection(viewModel: viewModel)
         }
         .padding(20)
         .frame(width: 400, height: 280)
@@ -677,7 +974,8 @@ struct CalendarContainer: View {
 }
 
 struct LearningStatsSection: View {
-    @StateObject private var viewModel = CalendarViewModel()
+    @ObservedObject var viewModel: CalendarViewModel
+
 
     @AppStorage("selectedLearning") private var selectedLearning: String = ""
 
