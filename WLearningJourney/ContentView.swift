@@ -33,10 +33,10 @@ struct SetupView: View {
     @Environment(\.dismiss) var dismiss
     
     @State private var userLearning: String = ""
-    @State private var selected: String = ""
+    @State private var selected: String = "Week"
     @State private var showConfirmAlert = false
     
-    let options = ["1W", "2W", "1M"]
+    let options = ["Week", "Month", "Year"]
     
     var body: some View {
         NavigationStack {
@@ -344,7 +344,16 @@ class CalendarViewModel: ObservableObject {
 
     @Published private(set) var learnedDates: Set<Date> = []
     @Published private(set) var freezedDates: Set<Date> = []
+    
+    
+    @AppStorage("allLearnedDates") private var allLearnedDatesData: Data = Data()
+    @AppStorage("allFreezedDates") private var allFreezedDatesData: Data = Data()
 
+    @Published var allLearnedDates: Set<Date> = []
+    @Published var allFreezedDates: Set<Date> = []
+
+
+    
     @Published var showMonthPicker = false
     @Published var isTodayLogged: Bool = false
     @Published var isTodayFreezed: Bool = false
@@ -369,7 +378,6 @@ class CalendarViewModel: ObservableObject {
     
     // MARK: - بداية فترة جديدة بهدف جديد
     func resetForNewGoal(_ newGoal: String, duration: String) {
-        // 🧹 امسح كل البيانات القديمة
         learnedDates.removeAll()
         freezedDates.removeAll()
         isTodayLogged = false
@@ -377,21 +385,23 @@ class CalendarViewModel: ObservableObject {
         isPeriodFinished = false
         currentStreak = 0
 
-        // 🔁 حفظ الهدف الجديد والمدة
+        // حفظ الهدف والمدة الجديدة
         UserDefaults.standard.set(newGoal, forKey: "selectedLearning")
         UserDefaults.standard.set(duration, forKey: "selectedDuration")
-        
-        // 🕓 سجل بداية الفترة الجديدة
+
+        // حفظ تاريخ البداية
         let startDate = Date()
         UserDefaults.standard.set(startDate, forKey: "learningStartDate")
         learningStartDate = startDate
-        selectedDuration = duration
+        selectedDuration = duration  // ← نحفظ داخل AppStorage
         
-        // 🔄 احفظ التغييرات بالـ AppStorage
+        // 🟢 هذا السطر الجديد: نعيد تحميلها فورًا
+        objectWillChange.send()
+
         saveData()
-        
         print("✅ New learning goal '\(newGoal)' started for duration: \(duration)")
     }
+
 
     
     // MARK: - إعادة تشغيل نفس الهدف والفترة
@@ -430,7 +440,7 @@ class CalendarViewModel: ObservableObject {
         switch selectedDuration {
         case "Week": return 2
         case "Month": return 4
-        case "Year": return 12
+        case "Year": return 96
         default: return 2
         }
     }
@@ -460,7 +470,8 @@ class CalendarViewModel: ObservableObject {
         checkIfTodayLogged()
         objectWillChange.send()
         checkIfLastDayAndFinish()
-        
+        allLearnedDates.insert(today) // ✅ يسجل دائمًا في التاريخ الكامل
+
         lastActiveDate = Date()
         currentStreak += 1
         saveData()
@@ -474,7 +485,8 @@ class CalendarViewModel: ObservableObject {
         checkIfTodayLogged()
         objectWillChange.send()
         checkIfLastDayAndFinish()
-        
+        allFreezedDates.insert(today) // ✅ يسجل دائمًا في التاريخ الكامل
+
         lastActiveDate = Date()
         saveData()
     }
@@ -486,6 +498,8 @@ class CalendarViewModel: ObservableObject {
             // تجاوز 32 ساعة بدون نشاط
             currentStreak = 0
             print("🔥 Streak reset due to inactivity (>32h)")
+            restartSameGoal()
+            
         }
     }
 
@@ -526,53 +540,85 @@ class CalendarViewModel: ObservableObject {
             let interval = midnight.timeIntervalSince(now)
             midnightTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
                 self?.checkIfTodayLogged()
+                self?.checkStreakValidity() // ✅ هنا
+
                 self?.scheduleMidnightReset()
+                
             }
         }
     }
-
     private func saveData() {
         let encoder = JSONEncoder()
+        
+        // حفظ الأيام الحالية
         if let learnedData = try? encoder.encode(Array(learnedDates)) {
             learnedDatesData = learnedData
         }
         if let freezedData = try? encoder.encode(Array(freezedDates)) {
             freezedDatesData = freezedData
         }
+        
+        // ✅ حفظ السجل الكامل (ما يُمسح أبدًا)
+        if let allLearnedData = try? encoder.encode(Array(allLearnedDates)) {
+            allLearnedDatesData = allLearnedData
+        }
+        if let allFreezedData = try? encoder.encode(Array(allFreezedDates)) {
+            allFreezedDatesData = allFreezedData
+        }
     }
 
     private func loadData() {
         let decoder = JSONDecoder()
+        
+        // تحميل الأيام الحالية
         if let decodedLearned = try? decoder.decode([Date].self, from: learnedDatesData) {
             learnedDates = Set(decodedLearned)
         }
         if let decodedFreezed = try? decoder.decode([Date].self, from: freezedDatesData) {
             freezedDates = Set(decodedFreezed)
         }
+        
+        // ✅ تحميل السجل الكامل (المحفوظ لكل الوقت)
+        if let decodedAllLearned = try? decoder.decode([Date].self, from: allLearnedDatesData) {
+            allLearnedDates = Set(decodedAllLearned)
+        }
+        if let decodedAllFreezed = try? decoder.decode([Date].self, from: allFreezedDatesData) {
+            allFreezedDates = Set(decodedAllFreezed)
+        }
+        
+        checkStreakValidity()
+
     }
+
     
     func checkIfLastDayAndFinish() {
-        let calendar = Calendar.current
-        var endDate: Date?
-
-        switch selectedDuration {
-        case "Week":
-            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
-        case "Month":
-            endDate = calendar.date(byAdding: .month, value: 1, to: learningStartDate)
-        case "Year":
-            endDate = calendar.date(byAdding: .year, value: 1, to: learningStartDate)
-        default:
-            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
-        }
-
-        // ✅ إذا اليوم هو آخر يوم من الفترة
-        if let endDate = endDate,
-           calendar.isDateInToday(endDate) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.isPeriodFinished = true
-            }
-        }
+//        let calendar = Calendar.current
+//        var endDate: Date?
+//
+//        switch selectedDuration {
+//        case "Week":
+//            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
+//        case "Month":
+//            endDate = calendar.date(byAdding: .month, value: 1, to: learningStartDate)
+//        case "Year":
+//            endDate = calendar.date(byAdding: .year, value: 1, to: learningStartDate)
+//        default:
+//            endDate = calendar.date(byAdding: .day, value: 7, to: learningStartDate)
+//        }
+//
+//        // ✅ إذا اليوم هو آخر يوم من الفترة
+//        if let endDate = endDate,
+//           calendar.isDateInToday(endDate) {
+//            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+//                self.isPeriodFinished = true
+//            }
+//        }
+        
+        // 🧪 للاختبار فقط: فعّل "Well done!" اليوم مباشرة
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+ 
+            self.isPeriodFinished = true}
+        
     }
     
     
@@ -608,13 +654,20 @@ struct ContentView2: View {
                         .foregroundColor(.white)
                     Spacer()
                     HStack(spacing: 10) {
-                        NavigationLink(destination: FullCalendarView(viewModel: viewModel)) {
-                            CircleButton(icon: "calendar")
-                        }
-                        .buttonStyle(.plain) // يمنع الشكل الافتراضي ويحافظ على التصميم
-                        
-                        CircleButton(icon: "pencil.and.outline")
-                    }
+                                         // 🗓️ زر الكلندر
+                                         NavigationLink(destination: FullCalendarView(viewModel: viewModel)) {
+                                             CircleButton(icon: "calendar")
+                                         }
+                                         .buttonStyle(.plain)
+
+                                         // ✏️ زر الفرشة → يفتح SetupView
+                                         NavigationLink(destination: SetupView(viewModel: viewModel)) {
+                                             CircleButton(icon: "pencil.and.outline")
+                                         }
+                                         .buttonStyle(.plain)
+                                     }
+                                 }
+                                 .padding(.horizontal, 20)
                     
                 }
                 .padding(.horizontal, 20)
@@ -691,34 +744,37 @@ struct ContentView2: View {
                 }
                 .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed)
                 // MARK: - Bottom Buttons Section
-                if viewModel.isPeriodFinished {
-                    VStack(spacing: 16) {
-                        // 🟠 زر Set new learning goal
-                        NavigationLink(destination: SetupView(viewModel: viewModel))  {
-                            Text("Set new learning goal")
-                                .font(.system(size: 19, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 274, height: 48)
-                                .background(Color(hex: "#B34600"))
-                                .clipShape(RoundedRectangle(cornerRadius: 80))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 80)
-                                        .strokeBorder(Color.white.opacity(0.9), lineWidth: 0.2)
-                                )
-                                .shadow(radius: 2)
-                        }
-
-                        // 🔸 زر نصي Set same learning goal and duration
-                        Button(action: {
-                          viewModel.restartSameGoal()
-                        }) {
-                            Text("Set same learning goal and duration")
-                                .font(.system(size: 16))
-                                .foregroundColor(Color(hex: "#B34600"))
-                        }
+            // MARK: - Bottom Section (dynamic display)
+            if viewModel.isPeriodFinished {
+                // لما المدة تخلص
+                VStack(spacing: 16) {
+                    NavigationLink(destination: SetupView(viewModel: viewModel))  {
+                        Text("Set new learning goal")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 274, height: 48)
+                            .background(Color(hex: "#B34600"))
+                            .clipShape(RoundedRectangle(cornerRadius: 80))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 80)
+                                    .strokeBorder(Color.white.opacity(0.9), lineWidth: 0.2)
+                            )
+                            .shadow(radius: 2)
                     }
-                } else {
-                    // 🔹 الزر الأصلي Log as Freezed
+
+                    // يظهر فقط إذا المدة انتهت
+                    Button(action: {
+                        viewModel.restartSameGoal()
+                    }) {
+                        Text("Set same learning goal and duration")
+                            .font(.system(size: 16))
+                            .foregroundColor(Color(hex: "#B34600"))
+                    }
+                }
+
+            } else {
+                // لما المدة ما خلصت
+                VStack(spacing: 16) {
                     Button(action: {
                         viewModel.markTodayAsFreezed()
                     }) {
@@ -741,17 +797,22 @@ struct ContentView2: View {
                             .glassEffect(.regular.tint(.clear))
                     }
                     .disabled(viewModel.isTodayLogged || viewModel.isTodayFreezed || viewModel.hasReachedFreezeLimit)
-                }
 
-                Text("\(viewModel.usedFreezes) out of \(viewModel.totalFreezesAllowed) Freezes used (\(selectedDuration))")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.gray.opacity(0.5))
-                
+                    // يظهر فقط إذا المدة مستمرة
+                    Text("\(viewModel.usedFreezes) out of \(viewModel.totalFreezesAllowed) Freezes used (\(selectedDuration))")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.gray.opacity(0.5))
+                }
             }
+
+                
+            }             .navigationBarBackButtonHidden(true)
+
             .padding(.vertical, 20)
             .preferredColorScheme(.dark)
+
         }
-    }}
+    }
 
 
 
@@ -772,7 +833,6 @@ struct CircleButton: View {
     }
 }
 
-
 // MARK: - FULL CALENDAR VIEW
 struct FullCalendarView: View {
     @ObservedObject var viewModel: CalendarViewModel
@@ -790,9 +850,11 @@ struct FullCalendarView: View {
                             .foregroundColor(.white)
                             .padding(.horizontal)
 
+                        // ✅ نرسل له القيم الدائمة
                         CalendarMonthView(
                             monthStart: monthStart,
-                            viewModel: viewModel
+                            learnedDates: viewModel.allLearnedDates,
+                            freezedDates: viewModel.allFreezedDates
                         )
                     }
                 }
@@ -801,7 +863,6 @@ struct FullCalendarView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .toolbar {
-
             ToolbarItem(placement: .principal) {
                 Text("All activities")
                     .font(.system(size: 18, weight: .semibold))
@@ -830,7 +891,8 @@ struct FullCalendarView: View {
 // MARK: - MONTH GRID
 struct CalendarMonthView: View {
     var monthStart: Date
-    @ObservedObject var viewModel: CalendarViewModel
+    var learnedDates: Set<Date>
+    var freezedDates: Set<Date>
 
     var body: some View {
         let calendar = Calendar.current
@@ -859,8 +921,9 @@ struct CalendarMonthView: View {
                 // الأيام
                 ForEach(days, id: \.self) { day in
                     let date = calendar.date(byAdding: .day, value: day - 1, to: monthStart)!
-                    let isLearned = viewModel.isLearned(date)
-                    let isFreezed = viewModel.isFreezed(date)
+                    let dayStart = calendar.startOfDay(for: date)
+                    let isLearned = learnedDates.contains(dayStart)
+                    let isFreezed = freezedDates.contains(dayStart)
 
                     Text("\(day)")
                         .frame(width: 40, height: 40)
@@ -878,6 +941,7 @@ struct CalendarMonthView: View {
         }
     }
 }
+
 
 
 
